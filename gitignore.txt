@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment variables - NEVER commit these
+.env
+
+# Node
+node_modules/
+build/
+npm-debug.log*
+
+# MongoDB data
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
