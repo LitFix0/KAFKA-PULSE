@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   PieChart, Pie, Cell, Tooltip,
-  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Legend
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
 
 const API = "http://localhost:8000";
@@ -12,7 +12,14 @@ const COLORS = {
   neutral:  "#5b8dee",
 };
 
-// ── Custom tooltip for pie chart ───────────────────────────────────────────────
+const QUERY_COLORS = {
+  technology: "#bc8cff",
+  AI:         "#00e5a0",
+  economy:    "#ffd166",
+  climate:    "#06d6a0",
+  stocks:     "#ff9f1c",
+};
+
 const PieTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   const { name, value } = payload[0];
@@ -26,7 +33,6 @@ const PieTooltip = ({ active, payload }) => {
   );
 };
 
-// ── Sentiment badge ────────────────────────────────────────────────────────────
 const Badge = ({ sentiment }) => {
   const color = COLORS[sentiment] || "#aaa";
   return (
@@ -40,14 +46,33 @@ const Badge = ({ sentiment }) => {
   );
 };
 
-// ── Main App ───────────────────────────────────────────────────────────────────
+const QueryTag = ({ query }) => {
+  const color = QUERY_COLORS[query] || "#555580";
+  return (
+    <span style={{
+      background: color + "18", color, border: `1px solid ${color}33`,
+      borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 600,
+    }}>
+      #{query}
+    </span>
+  );
+};
+
+const SourceTag = ({ source }) => (
+  <span style={{
+    background: "#1e1e40", color: "#555580",
+    borderRadius: 4, padding: "2px 8px", fontSize: 11,
+  }}>
+    {source}
+  </span>
+);
+
 export default function App() {
   const [stats, setStats]       = useState(null);
   const [timeline, setTimeline] = useState([]);
   const [feed, setFeed]         = useState([]);
   const [tick, setTick]         = useState(0);
 
-  // Auto-refresh every 5 seconds
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 5000);
     return () => clearInterval(id);
@@ -72,13 +97,12 @@ export default function App() {
       })
       .catch(() => {});
 
-    fetch(`${API}/api/recent?limit=15`)
+    fetch(`${API}/api/recent?limit=20`)
       .then(r => r.json())
       .then(setFeed)
       .catch(() => {});
   }, [tick]);
 
-  // Pie chart data
   const pieData = stats ? [
     { name: "positive", value: stats.positive },
     { name: "negative", value: stats.negative },
@@ -93,55 +117,34 @@ export default function App() {
       fontFamily: "'DM Mono', 'Courier New', monospace",
       padding: "32px 40px",
     }}>
-
-      {/* Google Font */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@700;800&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0a0a1a; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        .card {
-          background: #11112a;
-          border: 1px solid #1e1e40;
-          border-radius: 12px;
-          padding: 24px;
-        }
-        .card-title {
-          font-size: 11px;
-          letter-spacing: 2px;
-          text-transform: uppercase;
-          color: #555580;
-          margin-bottom: 16px;
-        }
-        .feed-item {
-          border-bottom: 1px solid #1a1a35;
-          padding: 12px 0;
-          transition: background 0.2s;
-        }
+        .card { background: #11112a; border: 1px solid #1e1e40; border-radius: 12px; padding: 24px; }
+        .card-title { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #555580; margin-bottom: 16px; }
+        .feed-item { border-bottom: 1px solid #1a1a35; padding: 12px 0; }
         .feed-item:last-child { border-bottom: none; }
       `}</style>
 
-      {/* Header */}
       <div style={{ marginBottom: 36 }}>
         <h1 style={{
-          fontFamily: "'Syne', sans-serif",
-          fontSize: 36, fontWeight: 800,
+          fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800,
           background: "linear-gradient(90deg, #00e5a0, #5b8dee)",
-          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-          marginBottom: 4,
+          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", marginBottom: 4,
         }}>
           ⚡ KafkaPulse
         </h1>
         <p style={{ color: "#444466", fontSize: 13 }}>
-          Real-time sentiment pipeline · auto-refreshing every 5s
+          Real-time sentiment pipeline · live news data · auto-refreshing every 5s
         </p>
       </div>
 
-      {/* Stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 28 }}>
         {[
-          { label: "Total Analyzed", value: stats?.total ?? "—", color: "#fff" },
+          { label: "Total Analyzed", value: stats?.total    ?? "—", color: "#fff" },
           { label: "Positive",       value: stats?.positive ?? "—", color: COLORS.positive },
           { label: "Negative",       value: stats?.negative ?? "—", color: COLORS.negative },
           { label: "Neutral",        value: stats?.neutral  ?? "—", color: COLORS.neutral  },
@@ -155,26 +158,17 @@ export default function App() {
         ))}
       </div>
 
-      {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16, marginBottom: 28 }}>
-
-        {/* Pie chart */}
         <div className="card">
           <div className="card-title">Sentiment Distribution</div>
           <PieChart width={240} height={240}>
-            <Pie
-              data={pieData} cx={110} cy={110}
-              innerRadius={65} outerRadius={100}
-              paddingAngle={3} dataKey="value"
-            >
+            <Pie data={pieData} cx={110} cy={110} innerRadius={65} outerRadius={100} paddingAngle={3} dataKey="value">
               {pieData.map(entry => (
                 <Cell key={entry.name} fill={COLORS[entry.name]} stroke="none" />
               ))}
             </Pie>
             <Tooltip content={<PieTooltip />} />
           </PieChart>
-
-          {/* Legend */}
           <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 8 }}>
             {pieData.map(({ name }) => (
               <div key={name} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
@@ -185,7 +179,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Line chart */}
         <div className="card">
           <div className="card-title">Sentiment Score · Timeline</div>
           <ResponsiveContainer width="100%" height={260}>
@@ -198,17 +191,12 @@ export default function App() {
                 labelStyle={{ color: "#888" }}
                 itemStyle={{ color: "#00e5a0" }}
               />
-              <Line
-                type="monotone" dataKey="score"
-                stroke="#00e5a0" strokeWidth={2}
-                dot={false} activeDot={{ r: 4, fill: "#00e5a0" }}
-              />
+              <Line type="monotone" dataKey="score" stroke="#00e5a0" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: "#00e5a0" }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Live feed */}
       <div className="card">
         <div className="card-title">Live Feed · Latest Articles</div>
         {feed.length === 0 ? (
@@ -216,8 +204,10 @@ export default function App() {
         ) : (
           feed.map((item, i) => (
             <div key={i} className="feed-item">
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                 <Badge sentiment={item.sentiment} />
+                <QueryTag query={item.query} />
+                <SourceTag source={item.source} />
                 <span style={{ color: "#555580", fontSize: 11 }}>
                   score: <span style={{ color: COLORS[item.sentiment] }}>
                     {item.score > 0 ? "+" : ""}{item.score?.toFixed(3)}
@@ -228,7 +218,7 @@ export default function App() {
                 </span>
               </div>
               <p style={{ fontSize: 13, color: "#9090b0", lineHeight: 1.5 }}>
-                {item.text?.slice(0, 120)}
+                {item.text?.slice(0, 140)}
               </p>
             </div>
           ))

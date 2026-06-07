@@ -1,18 +1,19 @@
 """
 producer/news_producer.py
 --------------------------
-Step 1 of KafkaPulse — Producer Service
+KafkaPulse — Producer Service (Real Data)
 
-Fetches headlines from News API and publishes them to
+Fetches live headlines from News API and publishes them to
 the Kafka `raw_text` topic.
 
 Run:
     python news_producer.py
 
 Requirements:
-    pip install kafka-python requests pyyaml
+    pip install kafka-python requests python-dotenv
 """
 
+import os
 import json
 import time
 import uuid
@@ -20,18 +21,22 @@ import logging
 from datetime import datetime, timezone
 
 import requests
+from dotenv import load_dotenv
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
+
+# Load .env file
+load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 KAFKA_BOOTSTRAP = "localhost:9092"
 KAFKA_TOPIC     = "raw_text"
 
-NEWS_API_KEY     = "YOUR_NEWS_API_KEY_HERE"   # https://newsapi.org (free)
-NEWS_QUERIES     = ["technology", "AI", "economy"]
-POLL_INTERVAL_S  = 10     # seconds between fetches
-PAGE_SIZE        = 10     # articles per query per poll
+NEWS_API_KEY    = os.getenv("NEWS_API_KEY")
+NEWS_QUERIES    = ["technology", "AI", "economy", "climate", "stocks"]
+POLL_INTERVAL_S = 30    # News API free tier has rate limits, 30s is safe
+PAGE_SIZE       = 10    # articles per query per poll
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -46,18 +51,15 @@ log = logging.getLogger(__name__)
 # ── Kafka ──────────────────────────────────────────────────────────────────────
 
 def create_producer() -> KafkaProducer:
-    """
-    Connect to Kafka and return a producer.
-    Retries up to 5 times if Kafka isn't ready yet.
-    """
+    """Connect to Kafka, retry up to 5 times."""
     for attempt in range(1, 6):
         try:
             producer = KafkaProducer(
                 bootstrap_servers=KAFKA_BOOTSTRAP,
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                acks="all",       # wait for broker acknowledgment
+                acks="all",
                 retries=3,
-                linger_ms=100,    # batch messages for 100ms before sending
+                linger_ms=100,
             )
             log.info(f"Connected to Kafka at {KAFKA_BOOTSTRAP}")
             return producer
@@ -71,7 +73,7 @@ def create_producer() -> KafkaProducer:
 
 def fetch_articles(query: str) -> list[dict]:
     """
-    Fetch top headlines for a query keyword from News API.
+    Fetch latest articles for a query keyword from News API.
     Returns a list of normalized article dicts.
     """
     try:
@@ -87,16 +89,23 @@ def fetch_articles(query: str) -> list[dict]:
             timeout=10,
         )
         resp.raise_for_status()
+        data = resp.json()
+
+        # Handle API-level errors (e.g. invalid key, rate limit)
+        if data.get("status") != "ok":
+            log.error(f"News API error: {data.get('message', 'Unknown error')}")
+            return []
 
         articles = []
-        for item in resp.json().get("articles", []):
-            # Combine title + description for richer text
+        for item in data.get("articles", []):
+            # Combine title + description for richer sentiment analysis
             text = " ".join(filter(None, [
                 item.get("title", ""),
                 item.get("description", ""),
             ])).strip()
 
-            if not text:
+            # Skip articles with no text or removed content
+            if not text or text == "[Removed]":
                 continue
 
             articles.append({
@@ -112,57 +121,30 @@ def fetch_articles(query: str) -> list[dict]:
         return articles
 
     except requests.RequestException as e:
-        log.error(f"News API error for query='{query}': {e}")
+        log.error(f"News API request failed for query='{query}': {e}")
         return []
-
-
-# ── Simulation mode (no API key needed for testing) ───────────────────────────
-
-_FAKE_HEADLINES = [
-    "Tech stocks surge as AI boom continues to drive market optimism",
-    "Climate scientists warn of accelerating ice melt in Arctic regions",
-    "Federal Reserve signals possible rate cuts amid slowing inflation",
-    "Startup raises $200M to build next-generation battery technology",
-    "Global chip shortage eases as semiconductor production ramps up",
-    "Breakthrough cancer treatment shows promising results in trials",
-    "Electric vehicle sales fall short of manufacturer expectations",
-    "Geopolitical tensions rise over disputed trade routes in Asia",
-    "AI regulation debate intensifies as governments struggle to keep pace",
-    "Renewable energy surpasses coal in global electricity generation",
-]
-
-def simulate_articles(query: str) -> list[dict]:
-    """Return fake articles — used when NEWS_API_KEY is not set."""
-    import random
-    return [
-        {
-            "id":        str(uuid.uuid4()),
-            "text":      h,
-            "url":       "",
-            "source":    "simulation",
-            "query":     query,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        for h in random.sample(_FAKE_HEADLINES, k=5)
-    ]
 
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
 def run():
-    producer   = create_producer()
-    use_sim    = (NEWS_API_KEY == "YOUR_NEWS_API_KEY_HERE")
-    seen_urls  = set()   # simple in-process deduplication
+    # Validate API key before starting
+    if not NEWS_API_KEY:
+        raise RuntimeError(
+            "NEWS_API_KEY not found. "
+            "Add it to producer/.env as: NEWS_API_KEY=your_key_here"
+        )
 
-    if use_sim:
-        log.warning("No API key set — running in SIMULATION MODE.")
+    producer  = create_producer()
+    seen_urls = set()   # deduplicate within session
 
     log.info(f"Producer started. Topic='{KAFKA_TOPIC}', interval={POLL_INTERVAL_S}s")
+    log.info(f"Queries: {NEWS_QUERIES}")
 
     try:
         while True:
             for query in NEWS_QUERIES:
-                articles = simulate_articles(query) if use_sim else fetch_articles(query)
+                articles = fetch_articles(query)
 
                 published = 0
                 for article in articles:
@@ -171,21 +153,20 @@ def run():
                         continue
                     seen_urls.add(dedup_key)
 
-                    # Send to Kafka — async with delivery callbacks
                     producer.send(KAFKA_TOPIC, value=article) \
                         .add_callback(lambda m: log.debug(f"Delivered → partition={m.partition} offset={m.offset}")) \
                         .add_errback(lambda e: log.error(f"Delivery failed: {e}"))
 
                     published += 1
 
-                log.info(f"Published {published} new messages  (query='{query}')")
+                log.info(f"Published {published} new messages (query='{query}')")
 
-            producer.flush()   # ensure all buffered messages are sent
-            log.info(f"Sleeping {POLL_INTERVAL_S}s…\n")
+            producer.flush()
+            log.info(f"Sleeping {POLL_INTERVAL_S}s...\n")
             time.sleep(POLL_INTERVAL_S)
 
     except KeyboardInterrupt:
-        log.info("Shutting down…")
+        log.info("Shutting down...")
     finally:
         producer.flush()
         producer.close()
